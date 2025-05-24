@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "DOI Finder",
+  "version": "0.0.1",
+  "description": "A Zotero plugin to find and add missing DOI numbers to references",
+  "author": "Your Name",
+  "homepage_url": "https://github.com/yourusername/zotero-doi-finder#readme",
+  "icons": {
+    "48": "content/icons/icon.png",
+    "96": "content/icons/icon@2x.png"
+  },
+  "applications": {
+    "zotero": {
+      "id": "doifinder@zotero.org",
+      "strict_min_version": "7.0.0",
+      "strict_max_version": "7.0.*",
+      "update_url": "https://raw.githubusercontent.com/yourusername/zotero-doi-finder/main/update.json"
+    }
+  }
+}
