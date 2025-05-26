@@ -10,27 +10,26 @@
   };
 
   // src/utils/locale.ts
-  function getString(key, substitutions) {
+  function getString(key, params) {
     const strings = {
-      "startup.begin": "DOI Finder is starting...",
-      "startup.finish": "DOI Finder is ready!",
       "toolbar.label": "Find DOIs",
-      "toolbar.tooltip": "Find missing DOI numbers for selected items",
+      "toolbar.tooltip": "Find missing DOIs for items in the current view",
       "menu.findDOI": "Find DOI",
-      "menu.findDOICollection": "Find DOIs in Collection",
       "menu.findDOILibrary": "Find DOIs in Library",
-      "findDOI.title": "Finding DOIs",
-      "findDOI.processing": "Processing item {current} of {total}...",
-      "findDOI.complete": "Complete! Found {found} DOIs out of {total} items",
-      "findDOI.noneFound": "No Items Found",
-      "findDOI.noneSelected": "No Items Selected",
-      "findDOI.allHaveDOI": "All selected items already have DOI numbers"
+      "findDOI.title": "DOI Finder",
+      "findDOI.noneFound": "No items without DOIs",
+      "findDOI.noneSelected": "No items selected",
+      "findDOI.allHaveDOI": "All selected items already have DOI numbers",
+      "findDOI.complete": "Found ${found} DOIs out of ${total} items",
+      "findDOI.progress.title": "Finding DOIs",
+      "findDOI.progress.processing": "Processing items...",
+      "findDOI.progress.item": "Processing item ${current} of ${total} (${percent}%)"
     };
     let str = strings[key] || key;
-    if (substitutions && typeof substitutions === "object") {
-      Object.entries(substitutions).forEach(([k, v]) => {
-        str = str.replace(`{${k}}`, String(v));
-      });
+    if (params) {
+      for (const param in params) {
+        str = str.replace(`\${${param}}`, params[param]);
+      }
     }
     return str;
   }
@@ -55,32 +54,23 @@
       itemMenu.appendChild(menuitem);
     }
     Zotero.DOIFinder.findDOIsForSelected = async () => {
-      const items = ZoteroPane.getSelectedItems();
+      const ZP = Zotero.getActiveZoteroPane();
+      const items = ZP.getSelectedItems();
       const itemsWithoutDOI = items.filter(
-        (item) => item.isRegularItem() && !item.getField("DOI")
+        (item) => {
+          const doi = item.getField("DOI");
+          return item.isRegularItem() && (!doi || doi.trim() === "" || doi.trim() === "-");
+        }
       );
       if (itemsWithoutDOI.length === 0) {
         Services.prompt.alert(null, getString("findDOI.noneSelected"), getString("findDOI.allHaveDOI"));
         return;
       }
-      let found = 0;
-      for (const item of itemsWithoutDOI) {
-        try {
-          const doi = await Zotero.DOIFinder.findDOIForItem(item);
-          if (doi) {
-            item.setField("DOI", doi);
-            await item.saveTx();
-            found++;
-          }
-        } catch (error) {
-          Zotero.debug(`DOI Finder: Error processing item ${item.id}: ${error}`);
-        }
-        await Zotero.Promise.delay(300);
-      }
+      const result = await Zotero.DOIFinder.processItems(itemsWithoutDOI);
       Services.prompt.alert(
         null,
         getString("findDOI.title"),
-        getString("findDOI.complete", { found, total: itemsWithoutDOI.length })
+        getString("findDOI.complete", result)
       );
     };
   }
@@ -131,15 +121,24 @@
     }
     Zotero.DOIFinder.findDOIs = findDOIs;
     Zotero.DOIFinder.findDOIForItem = findDOIForItem;
+    Zotero.DOIFinder.processItems = processItems;
     Zotero.debug("DOI Finder: Initialized");
   })();
+  function hasValidDOI(item) {
+    const doi = item.getField("DOI");
+    return doi && doi.trim() !== "" && doi.trim() !== "-";
+  }
   async function findDOIForItem(item) {
-    if (!item.isRegularItem() || item.getField("DOI")) {
+    const doi = item.getField("DOI");
+    Zotero.debug(`DOI Finder: Checking item ${item.id}, title: "${item.getField("title")}", DOI field: "${doi}"`);
+    if (!item.isRegularItem() || hasValidDOI(item)) {
+      Zotero.debug(`DOI Finder: Item ${item.id} skipped - regular: ${item.isRegularItem()}, has valid DOI: ${hasValidDOI(item)}`);
       return null;
     }
     const title = item.getField("title");
     const creators = item.getCreators();
     if (!title) {
+      Zotero.debug(`DOI Finder: Item ${item.id} has no title`);
       return null;
     }
     const queryParts = [];
@@ -155,6 +154,7 @@
       queryParts.push(`filter=from-pub-date:${year},until-pub-date:${year}`);
     }
     const url = `https://api.crossref.org/works?${queryParts.join("&")}&rows=5`;
+    Zotero.debug(`DOI Finder: Querying CrossRef: ${url}`);
     try {
       const xhr = new XMLHttpRequest();
       xhr.open("GET", url, false);
@@ -165,6 +165,7 @@
         const items = data.message?.items || [];
         for (const crossrefItem of items) {
           if (crossrefItem.DOI && isTitleMatch(title, crossrefItem.title?.[0])) {
+            Zotero.debug(`DOI Finder: Found matching DOI: ${crossrefItem.DOI}`);
             return crossrefItem.DOI;
           }
         }
@@ -218,25 +219,26 @@
     }
     return matrix[str2.length][str1.length];
   }
-  async function findDOIs() {
-    const ZP = Zotero.getActiveZoteroPane();
-    const collection = ZP.getSelectedCollection();
-    const libraryID = collection ? collection.libraryID : ZP.getSelectedLibraryID();
-    let items;
-    if (collection) {
-      items = collection.getChildItems();
-    } else {
-      items = await Zotero.Items.getAll(libraryID);
-    }
-    const itemsWithoutDOI = items.filter(
-      (item) => item.isRegularItem() && !item.getField("DOI")
-    );
-    if (itemsWithoutDOI.length === 0) {
-      Services.prompt.alert(null, getString("findDOI.noneFound"), getString("findDOI.allHaveDOI"));
-      return;
-    }
+  async function processItems(items) {
+    const progressWin = new Zotero.ProgressWindow({
+      closeOnClick: false
+    });
+    progressWin.changeHeadline(getString("findDOI.progress.title") || "Finding DOIs");
+    const progressText = getString("findDOI.progress.processing") || "Processing items...";
+    const icon = "chrome://zotero/skin/16/universal/book.svg";
+    progressWin.addLines(progressText, icon);
+    progressWin.show();
     let found = 0;
-    for (const item of itemsWithoutDOI) {
+    const total = items.length;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const percent = Math.round((i + 1) / total * 100);
+      const newProgressText = getString("findDOI.progress.item", {
+        current: i + 1,
+        total,
+        percent
+      }) || `Processing item ${i + 1} of ${total} (${percent}%)`;
+      progressWin.changeHeadline(newProgressText);
       try {
         const doi = await findDOIForItem(item);
         if (doi) {
@@ -249,10 +251,36 @@
       }
       await Zotero.Promise.delay(300);
     }
+    progressWin.close();
+    return { found, total };
+  }
+  async function findDOIs() {
+    const ZP = Zotero.getActiveZoteroPane();
+    const collection = ZP.getSelectedCollection();
+    const libraryID = collection ? collection.libraryID : ZP.getSelectedLibraryID();
+    let items;
+    if (collection) {
+      items = collection.getChildItems();
+    } else {
+      items = await Zotero.Items.getAll(libraryID);
+    }
+    Zotero.debug(`DOI Finder: Processing ${items.length} total items`);
+    const itemsWithoutDOI = items.filter((item) => {
+      const doi = item.getField("DOI");
+      const needsDOI = item.isRegularItem() && (!doi || doi.trim() === "" || doi.trim() === "-");
+      Zotero.debug(`DOI Finder: Item ${item.id} - regular: ${item.isRegularItem()}, DOI: "${doi}", needs DOI: ${needsDOI}`);
+      return needsDOI;
+    });
+    Zotero.debug(`DOI Finder: Found ${itemsWithoutDOI.length} items without DOI`);
+    if (itemsWithoutDOI.length === 0) {
+      Services.prompt.alert(null, getString("findDOI.noneFound"), getString("findDOI.allHaveDOI"));
+      return;
+    }
+    const result = await processItems(itemsWithoutDOI);
     Services.prompt.alert(
       null,
       getString("findDOI.title"),
-      getString("findDOI.complete", { found, total: itemsWithoutDOI.length })
+      getString("findDOI.complete", result)
     );
   }
   var src_default = {};

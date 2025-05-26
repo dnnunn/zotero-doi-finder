@@ -3,7 +3,6 @@ import { registerMenus } from "./modules/menu";
 import { getString } from "./utils/locale";
 
 declare const Zotero: any;
-declare const ZoteroPane: any;
 declare const Services: any;
 declare const Components: any;
 
@@ -66,12 +65,22 @@ if (!Zotero.DOIFinder) {
   // Export functions
   Zotero.DOIFinder.findDOIs = findDOIs;
   Zotero.DOIFinder.findDOIForItem = findDOIForItem;
+  Zotero.DOIFinder.processItems = processItems;
   
   Zotero.debug("DOI Finder: Initialized");
 })();
 
+function hasValidDOI(item: any): boolean {
+  const doi = item.getField('DOI');
+  return doi && doi.trim() !== '' && doi.trim() !== '-';
+}
+
 async function findDOIForItem(item: any): Promise<string | null> {
-  if (!item.isRegularItem() || item.getField('DOI')) {
+  const doi = item.getField('DOI');
+  Zotero.debug(`DOI Finder: Checking item ${item.id}, title: "${item.getField('title')}", DOI field: "${doi}"`);
+  
+  if (!item.isRegularItem() || hasValidDOI(item)) {
+    Zotero.debug(`DOI Finder: Item ${item.id} skipped - regular: ${item.isRegularItem()}, has valid DOI: ${hasValidDOI(item)}`);
     return null;
   }
 
@@ -79,6 +88,7 @@ async function findDOIForItem(item: any): Promise<string | null> {
   const creators = item.getCreators();
   
   if (!title) {
+    Zotero.debug(`DOI Finder: Item ${item.id} has no title`);
     return null;
   }
 
@@ -98,6 +108,7 @@ async function findDOIForItem(item: any): Promise<string | null> {
   }
 
   const url = `https://api.crossref.org/works?${queryParts.join('&')}&rows=5`;
+  Zotero.debug(`DOI Finder: Querying CrossRef: ${url}`);
 
   try {
     const xhr = new XMLHttpRequest();
@@ -111,6 +122,7 @@ async function findDOIForItem(item: any): Promise<string | null> {
 
       for (const crossrefItem of items) {
         if (crossrefItem.DOI && isTitleMatch(title, crossrefItem.title?.[0])) {
+          Zotero.debug(`DOI Finder: Found matching DOI: ${crossrefItem.DOI}`);
           return crossrefItem.DOI;
         }
       }
@@ -179,30 +191,36 @@ function levenshteinDistance(str1: string, str2: string): number {
   return matrix[str2.length][str1.length];
 }
 
-async function findDOIs(): Promise<void> {
-  const ZP = Zotero.getActiveZoteroPane();
-  const collection = ZP.getSelectedCollection();
-  const libraryID = collection ? collection.libraryID : ZP.getSelectedLibraryID();
+async function processItems(items: any[]): Promise<{ found: number; total: number }> {
+  // Create progress window
+  const progressWin = new Zotero.ProgressWindow({
+    closeOnClick: false
+  });
+  progressWin.changeHeadline(getString("findDOI.progress.title") || "Finding DOIs");
   
-  let items: any[];
-  if (collection) {
-    items = collection.getChildItems();
-  } else {
-    items = await Zotero.Items.getAll(libraryID);
-  }
-
-  const itemsWithoutDOI = items.filter(
-    (item: any) => item.isRegularItem() && !item.getField('DOI')
-  );
-
-  if (itemsWithoutDOI.length === 0) {
-    Services.prompt.alert(null, getString("findDOI.noneFound"), getString("findDOI.allHaveDOI"));
-    return;
-  }
-
+  // Create progress indicator
+  const progressText = getString("findDOI.progress.processing") || "Processing items...";
+  const icon = "chrome://zotero/skin/16/universal/book.svg";
+  progressWin.addLines(progressText, icon);
+  
+  progressWin.show();
+  
   let found = 0;
+  const total = items.length;
   
-  for (const item of itemsWithoutDOI) {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    
+    // Update progress text
+    const percent = Math.round(((i + 1) / total) * 100);
+    const newProgressText = getString("findDOI.progress.item", { 
+      current: i + 1, 
+      total: total, 
+      percent: percent 
+    }) || `Processing item ${i + 1} of ${total} (${percent}%)`;
+    
+    progressWin.changeHeadline(newProgressText);
+    
     try {
       const doi = await findDOIForItem(item);
       if (doi) {
@@ -216,11 +234,46 @@ async function findDOIs(): Promise<void> {
 
     await Zotero.Promise.delay(300);
   }
+  
+  progressWin.close();
+  
+  return { found, total };
+}
+
+async function findDOIs(): Promise<void> {
+  const ZP = Zotero.getActiveZoteroPane();
+  const collection = ZP.getSelectedCollection();
+  const libraryID = collection ? collection.libraryID : ZP.getSelectedLibraryID();
+  
+  let items: any[];
+  if (collection) {
+    items = collection.getChildItems();
+  } else {
+    items = await Zotero.Items.getAll(libraryID);
+  }
+
+  Zotero.debug(`DOI Finder: Processing ${items.length} total items`);
+
+  const itemsWithoutDOI = items.filter((item: any) => {
+    const doi = item.getField('DOI');
+    const needsDOI = item.isRegularItem() && (!doi || doi.trim() === '' || doi.trim() === '-');
+    Zotero.debug(`DOI Finder: Item ${item.id} - regular: ${item.isRegularItem()}, DOI: "${doi}", needs DOI: ${needsDOI}`);
+    return needsDOI;
+  });
+
+  Zotero.debug(`DOI Finder: Found ${itemsWithoutDOI.length} items without DOI`);
+
+  if (itemsWithoutDOI.length === 0) {
+    Services.prompt.alert(null, getString("findDOI.noneFound"), getString("findDOI.allHaveDOI"));
+    return;
+  }
+
+  const result = await processItems(itemsWithoutDOI);
 
   Services.prompt.alert(
     null, 
     getString("findDOI.title"),
-    getString("findDOI.complete", { found, total: itemsWithoutDOI.length })
+    getString("findDOI.complete", result)
   );
 }
 

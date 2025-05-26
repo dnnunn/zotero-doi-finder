@@ -1,30 +1,25 @@
-declare const Zotero: any;
-declare const Services: any;
-
-export function getString(key: string, substitutions?: any): string {
-  // Use hardcoded strings for simplicity
+export function getString(key: string, params?: any): string {
   const strings: { [key: string]: string } = {
-    "startup.begin": "DOI Finder is starting...",
-    "startup.finish": "DOI Finder is ready!",
     "toolbar.label": "Find DOIs",
-    "toolbar.tooltip": "Find missing DOI numbers for selected items",
+    "toolbar.tooltip": "Find missing DOIs for items in the current view",
     "menu.findDOI": "Find DOI",
-    "menu.findDOICollection": "Find DOIs in Collection",
     "menu.findDOILibrary": "Find DOIs in Library",
-    "findDOI.title": "Finding DOIs",
-    "findDOI.processing": "Processing item {current} of {total}...",
-    "findDOI.complete": "Complete! Found {found} DOIs out of {total} items",
-    "findDOI.noneFound": "No Items Found",
-    "findDOI.noneSelected": "No Items Selected",
-    "findDOI.allHaveDOI": "All selected items already have DOI numbers"
+    "findDOI.title": "DOI Finder",
+    "findDOI.noneFound": "No items without DOIs",
+    "findDOI.noneSelected": "No items selected",
+    "findDOI.allHaveDOI": "All selected items already have DOI numbers",
+    "findDOI.complete": "Found ${found} DOIs out of ${total} items",
+    "findDOI.progress.title": "Finding DOIs",
+    "findDOI.progress.processing": "Processing items...",
+    "findDOI.progress.item": "Processing item ${current} of ${total} (${percent}%)"
   };
   
   let str = strings[key] || key;
   
-  if (substitutions && typeof substitutions === 'object') {
-    Object.entries(substitutions).forEach(([k, v]) => {
-      str = str.replace(`{${k}}`, String(v));
-    });
+  if (params) {
+    for (const param in params) {
+      str = str.replace(`\${${param}}`, params[param]);
+    }
   }
   
   return str;

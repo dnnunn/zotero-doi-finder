@@ -2,7 +2,7 @@ import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 
 declare const Zotero: any;
-declare const ZoteroPane: any;
+declare const Services: any;
 
 export function registerMenus() {
   const doc = Zotero.getMainWindow().document;
@@ -29,9 +29,13 @@ export function registerMenus() {
   
   // Export function for selected items
   Zotero.DOIFinder.findDOIsForSelected = async () => {
-    const items = ZoteroPane.getSelectedItems();
+    const ZP = Zotero.getActiveZoteroPane();
+    const items = ZP.getSelectedItems();
     const itemsWithoutDOI = items.filter(
-      (item: any) => item.isRegularItem() && !item.getField('DOI')
+      (item: any) => {
+        const doi = item.getField('DOI');
+        return item.isRegularItem() && (!doi || doi.trim() === '' || doi.trim() === '-');
+      }
     );
     
     if (itemsWithoutDOI.length === 0) {
@@ -39,25 +43,12 @@ export function registerMenus() {
       return;
     }
     
-    let found = 0;
-    for (const item of itemsWithoutDOI) {
-      try {
-        const doi = await Zotero.DOIFinder.findDOIForItem(item);
-        if (doi) {
-          item.setField('DOI', doi);
-          await item.saveTx();
-          found++;
-        }
-      } catch (error) {
-        Zotero.debug(`DOI Finder: Error processing item ${item.id}: ${error}`);
-      }
-      await Zotero.Promise.delay(300);
-    }
+    const result = await Zotero.DOIFinder.processItems(itemsWithoutDOI);
     
     Services.prompt.alert(
       null,
       getString("findDOI.title"),
-      getString("findDOI.complete", { found, total: itemsWithoutDOI.length })
+      getString("findDOI.complete", result)
     );
   };
 }
