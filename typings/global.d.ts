@@ -10,3 +10,5 @@ declare module "*.json" {
   const value: any;
   export default value;
 }
+
+// Working version - DOI and Abstract Finder functional
