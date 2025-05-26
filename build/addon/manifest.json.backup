@@ -14,7 +14,7 @@
       "id": "doifinder@zotero.org",
       "strict_min_version": "7.0.0",
       "strict_max_version": "7.0.*",
-      "update_url": "https://raw.githubusercontent.com/dnnunn/zotero-doi-finder/main/update.json"
+      "update_url": "https://raw.githubusercontent.com/yourusername/zotero-doi-finder/main/update.json"
     }
   }
 }

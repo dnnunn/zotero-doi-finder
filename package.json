@@ -1,7 +1,7 @@
 {
   "name": "zotero-doi-finder",
   "version": "0.0.1",
-  "description": "A Zotero plugin to find and add missing DOI numbers to references",
+  "description": "A Zotero plugin to find and add missing DOI numbers and abstracts to references",
   "config": {
     "addonName": "DOI and Abstract Finder",
     "addonID": "doifinder@zotero.org",
@@ -21,16 +21,16 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/yourusername/zotero-doi-finder.git"
+    "url": "git+https://github.com/dnnunn/zotero-doi-finder.git"
   },
   "author": {
-    "name": "Your Name",
-    "email": "your.email@example.com"
+    "name": "David Nunn",
+    "email": "dnnunn@gmail.com"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/zotero-doi-finder/issues"
+    "url": "https://github.com/dnnunn/zotero-doi-finder/issues"
   },
-  "homepage": "https://github.com/yourusername/zotero-doi-finder#readme",
+  "homepage": "https://github.com/dnnunn/zotero-doi-finder#readme",
   "dependencies": {
     "zotero-plugin-toolkit": "^2.3.15"
   },
