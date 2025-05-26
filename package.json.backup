@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "description": "A Zotero plugin to find and add missing DOI numbers to references",
   "config": {
-    "addonName": "DOI and Abstract Finder",
+    "addonName": "DOI Finder",
     "addonID": "doifinder@zotero.org",
     "addonRef": "doifinder",
     "addonInstance": "DOIFinder",

@@ -2,7 +2,7 @@
 (() => {
   // package.json
   var config = {
-    addonName: "DOI Finder",
+    addonName: "DOI and Abstract Finder",
     addonID: "doifinder@zotero.org",
     addonRef: "doifinder",
     addonInstance: "DOIFinder",
@@ -56,21 +56,32 @@
     Zotero.DOIFinder.findDOIsForSelected = async () => {
       const ZP = Zotero.getActiveZoteroPane();
       const items = ZP.getSelectedItems();
-      const itemsWithoutDOI = items.filter(
-        (item) => {
-          const doi = item.getField("DOI");
-          return item.isRegularItem() && (!doi || doi.trim() === "" || doi.trim() === "-");
-        }
-      );
-      if (itemsWithoutDOI.length === 0) {
-        Services.prompt.alert(null, getString("findDOI.noneSelected"), getString("findDOI.allHaveDOI"));
+      const itemsToProcess = items.filter((item) => {
+        if (!item.isRegularItem())
+          return false;
+        const doi = item.getField("DOI");
+        const abstract = item.getField("abstractNote");
+        const needsDOI = !doi || doi.trim() === "" || doi.trim() === "-";
+        const needsAbstract = !abstract || abstract.trim() === "";
+        return needsDOI || needsAbstract;
+      });
+      if (itemsToProcess.length === 0) {
+        Services.prompt.alert(null, getString("findDOI.noneSelected") || "Complete", "All selected items already have DOI numbers and abstracts.");
         return;
       }
-      const result = await Zotero.DOIFinder.processItems(itemsWithoutDOI);
+      const result = await Zotero.DOIFinder.processItems(itemsToProcess);
+      let message = `Found ${result.foundDOIs} new DOIs and ${result.foundAbstracts} abstracts for ${result.total} items processed.`;
+      if (result.foundDOIs === 0 && result.foundAbstracts === 0) {
+        message = "No new DOIs or abstracts were found.";
+      } else if (result.foundDOIs === 0) {
+        message = `Found ${result.foundAbstracts} new abstracts. No new DOIs were found.`;
+      } else if (result.foundAbstracts === 0) {
+        message = `Found ${result.foundDOIs} new DOIs. No abstracts were found.`;
+      }
       Services.prompt.alert(
         null,
-        getString("findDOI.title"),
-        getString("findDOI.complete", result)
+        getString("findDOI.title") || "DOI and Abstract Finder",
+        message
       );
     };
   }
@@ -219,16 +230,114 @@
     }
     return matrix[str2.length][str1.length];
   }
+  async function findAbstractFromSemanticScholar(doi) {
+    try {
+      const url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${doi}?fields=abstract`;
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url, false);
+      xhr.setRequestHeader("User-Agent", "Zotero DOI Finder/0.0.1");
+      xhr.send();
+      if (xhr.status === 200) {
+        const data = JSON.parse(xhr.responseText);
+        return data.abstract || null;
+      }
+    } catch (error) {
+      Zotero.debug(`DOI Finder: Semantic Scholar failed: ${error}`);
+    }
+    return null;
+  }
+  async function findAbstractFromPubMed(doi) {
+    try {
+      const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(doi)}&retmode=json`;
+      const searchXhr = new XMLHttpRequest();
+      searchXhr.open("GET", searchUrl, false);
+      searchXhr.send();
+      if (searchXhr.status !== 200)
+        return null;
+      const searchData = JSON.parse(searchXhr.responseText);
+      if (!searchData.esearchresult?.idlist?.length)
+        return null;
+      const pmid = searchData.esearchresult.idlist[0];
+      const abstractUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${pmid}&retmode=xml`;
+      const abstractXhr = new XMLHttpRequest();
+      abstractXhr.open("GET", abstractUrl, false);
+      abstractXhr.send();
+      if (abstractXhr.status !== 200)
+        return null;
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(abstractXhr.responseText, "text/xml");
+      const abstractNode = xmlDoc.querySelector("AbstractText");
+      return abstractNode ? abstractNode.textContent : null;
+    } catch (error) {
+      Zotero.debug(`DOI Finder: PubMed failed: ${error}`);
+    }
+    return null;
+  }
+  async function findAbstractFromOpenAlex(doi) {
+    try {
+      const url = `https://api.openalex.org/works/doi:${doi}`;
+      const xhr = new XMLHttpRequest();
+      xhr.open("GET", url, false);
+      xhr.setRequestHeader("User-Agent", "Zotero DOI Finder/0.0.1");
+      xhr.send();
+      if (xhr.status === 200) {
+        const data = JSON.parse(xhr.responseText);
+        if (data.abstract_inverted_index) {
+          return reconstructAbstract(data.abstract_inverted_index);
+        }
+      }
+    } catch (error) {
+      Zotero.debug(`DOI Finder: OpenAlex failed: ${error}`);
+    }
+    return null;
+  }
+  function reconstructAbstract(invertedIndex) {
+    const words = [];
+    for (const [word, positions] of Object.entries(invertedIndex)) {
+      for (const pos of positions) {
+        words[pos] = word;
+      }
+    }
+    return words.join(" ");
+  }
+  async function findAbstractForItem(item, doi) {
+    if (!doi)
+      return null;
+    const existingAbstract = item.getField("abstractNote");
+    if (existingAbstract && existingAbstract.trim() !== "") {
+      Zotero.debug(`DOI Finder: Item ${item.id} already has abstract`);
+      return null;
+    }
+    Zotero.debug(`DOI Finder: Searching for abstract with DOI: ${doi}`);
+    let abstract = await findAbstractFromSemanticScholar(doi);
+    if (abstract) {
+      Zotero.debug("DOI Finder: Abstract found via Semantic Scholar");
+      return abstract;
+    }
+    abstract = await findAbstractFromPubMed(doi);
+    if (abstract) {
+      Zotero.debug("DOI Finder: Abstract found via PubMed");
+      return abstract;
+    }
+    abstract = await findAbstractFromOpenAlex(doi);
+    if (abstract) {
+      Zotero.debug("DOI Finder: Abstract found via OpenAlex");
+      return abstract;
+    }
+    Zotero.debug("DOI Finder: Abstract not found in any source");
+    return null;
+  }
   async function processItems(items) {
     const progressWin = new Zotero.ProgressWindow({
       closeOnClick: false
     });
-    progressWin.changeHeadline(getString("findDOI.progress.title") || "Finding DOIs");
+    progressWin.changeHeadline(getString("findDOI.progress.title") || "Finding DOIs and Abstracts");
     const progressText = getString("findDOI.progress.processing") || "Processing items...";
     const icon = "chrome://zotero/skin/16/universal/book.svg";
     progressWin.addLines(progressText, icon);
     progressWin.show();
-    let found = 0;
+    let foundDOIs = 0;
+    let foundAbstracts = 0;
     const total = items.length;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -240,11 +349,24 @@
       }) || `Processing item ${i + 1} of ${total} (${percent}%)`;
       progressWin.changeHeadline(newProgressText);
       try {
-        const doi = await findDOIForItem(item);
+        let doi = item.getField("DOI");
+        if (!doi || doi.trim() === "" || doi.trim() === "-") {
+          doi = await findDOIForItem(item);
+          if (doi) {
+            item.setField("DOI", doi);
+            await item.saveTx();
+            foundDOIs++;
+          }
+        } else {
+          doi = doi.trim();
+        }
         if (doi) {
-          item.setField("DOI", doi);
-          await item.saveTx();
-          found++;
+          const abstract = await findAbstractForItem(item, doi);
+          if (abstract) {
+            item.setField("abstractNote", abstract);
+            await item.saveTx();
+            foundAbstracts++;
+          }
         }
       } catch (error) {
         Zotero.debug(`DOI Finder: Error processing item ${item.id}: ${error}`);
@@ -252,7 +374,7 @@
       await Zotero.Promise.delay(300);
     }
     progressWin.close();
-    return { found, total };
+    return { foundDOIs, foundAbstracts, total };
   }
   async function findDOIs() {
     const ZP = Zotero.getActiveZoteroPane();
@@ -265,22 +387,35 @@
       items = await Zotero.Items.getAll(libraryID);
     }
     Zotero.debug(`DOI Finder: Processing ${items.length} total items`);
-    const itemsWithoutDOI = items.filter((item) => {
+    const itemsToProcess = items.filter((item) => {
+      if (!item.isRegularItem())
+        return false;
       const doi = item.getField("DOI");
-      const needsDOI = item.isRegularItem() && (!doi || doi.trim() === "" || doi.trim() === "-");
-      Zotero.debug(`DOI Finder: Item ${item.id} - regular: ${item.isRegularItem()}, DOI: "${doi}", needs DOI: ${needsDOI}`);
-      return needsDOI;
+      const abstract = item.getField("abstractNote");
+      const needsDOI = !doi || doi.trim() === "" || doi.trim() === "-";
+      const needsAbstract = !abstract || abstract.trim() === "";
+      const shouldProcess = needsDOI || needsAbstract;
+      Zotero.debug(`DOI Finder: Item ${item.id} - DOI: "${doi}", Abstract: "${abstract ? "exists" : "missing"}", needs processing: ${shouldProcess}`);
+      return shouldProcess;
     });
-    Zotero.debug(`DOI Finder: Found ${itemsWithoutDOI.length} items without DOI`);
-    if (itemsWithoutDOI.length === 0) {
-      Services.prompt.alert(null, getString("findDOI.noneFound"), getString("findDOI.allHaveDOI"));
+    Zotero.debug(`DOI Finder: Found ${itemsToProcess.length} items that need DOIs or abstracts`);
+    if (itemsToProcess.length === 0) {
+      Services.prompt.alert(null, getString("findDOI.noneFound") || "Complete", "All selected items already have DOI numbers and abstracts.");
       return;
     }
-    const result = await processItems(itemsWithoutDOI);
+    const result = await processItems(itemsToProcess);
+    let message = `Found ${result.foundDOIs} new DOIs and ${result.foundAbstracts} abstracts for ${result.total} items processed.`;
+    if (result.foundDOIs === 0 && result.foundAbstracts === 0) {
+      message = "No new DOIs or abstracts were found.";
+    } else if (result.foundDOIs === 0) {
+      message = `Found ${result.foundAbstracts} new abstracts. No new DOIs were found.`;
+    } else if (result.foundAbstracts === 0) {
+      message = `Found ${result.foundDOIs} new DOIs. No abstracts were found.`;
+    }
     Services.prompt.alert(
       null,
-      getString("findDOI.title"),
-      getString("findDOI.complete", result)
+      getString("findDOI.title") || "DOI and Abstract Finder",
+      message
     );
   }
   var src_default = {};

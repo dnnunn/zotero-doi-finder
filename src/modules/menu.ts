@@ -28,27 +28,46 @@ export function registerMenus() {
   }
   
   // Export function for selected items
+  // Export function for selected items
   Zotero.DOIFinder.findDOIsForSelected = async () => {
     const ZP = Zotero.getActiveZoteroPane();
     const items = ZP.getSelectedItems();
-    const itemsWithoutDOI = items.filter(
-      (item: any) => {
-        const doi = item.getField('DOI');
-        return item.isRegularItem() && (!doi || doi.trim() === '' || doi.trim() === '-');
-      }
-    );
     
-    if (itemsWithoutDOI.length === 0) {
-      Services.prompt.alert(null, getString("findDOI.noneSelected"), getString("findDOI.allHaveDOI"));
+    // Use the same filtering logic as main function
+    const itemsToProcess = items.filter((item: any) => {
+      if (!item.isRegularItem()) return false;
+      
+      const doi = item.getField('DOI');
+      const abstract = item.getField('abstractNote');
+      
+      const needsDOI = !doi || doi.trim() === '' || doi.trim() === '-';
+      const needsAbstract = !abstract || abstract.trim() === '';
+      
+      return needsDOI || needsAbstract;
+    });
+    
+    if (itemsToProcess.length === 0) {
+      Services.prompt.alert(null, getString("findDOI.noneSelected") || "Complete", "All selected items already have DOI numbers and abstracts.");
       return;
     }
     
-    const result = await Zotero.DOIFinder.processItems(itemsWithoutDOI);
+    const result = await Zotero.DOIFinder.processItems(itemsToProcess);
+    
+    // Use the same detailed message as main function
+    let message = `Found ${result.foundDOIs} new DOIs and ${result.foundAbstracts} abstracts for ${result.total} items processed.`;
+    
+    if (result.foundDOIs === 0 && result.foundAbstracts === 0) {
+      message = "No new DOIs or abstracts were found.";
+    } else if (result.foundDOIs === 0) {
+      message = `Found ${result.foundAbstracts} new abstracts. No new DOIs were found.`;
+    } else if (result.foundAbstracts === 0) {
+      message = `Found ${result.foundDOIs} new DOIs. No abstracts were found.`;
+    }
     
     Services.prompt.alert(
       null,
-      getString("findDOI.title"),
-      getString("findDOI.complete", result)
+      getString("findDOI.title") || "DOI and Abstract Finder",
+      message
     );
   };
 }

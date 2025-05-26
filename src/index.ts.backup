@@ -191,135 +191,12 @@ function levenshteinDistance(str1: string, str2: string): number {
   return matrix[str2.length][str1.length];
 }
 
-
-// Abstract finding functions
-async function findAbstractFromSemanticScholar(doi: string): Promise<string | null> {
-  try {
-    const url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${doi}?fields=abstract`;
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', url, false);
-    xhr.setRequestHeader('User-Agent', 'Zotero DOI Finder/0.0.1');
-    xhr.send();
-    
-    if (xhr.status === 200) {
-      const data = JSON.parse(xhr.responseText);
-      return data.abstract || null;
-    }
-  } catch (error) {
-    Zotero.debug(`DOI Finder: Semantic Scholar failed: ${error}`);
-  }
-  return null;
-}
-
-async function findAbstractFromPubMed(doi: string): Promise<string | null> {
-  try {
-    // First search for PMID using DOI
-    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(doi)}&retmode=json`;
-    const searchXhr = new XMLHttpRequest();
-    searchXhr.open('GET', searchUrl, false);
-    searchXhr.send();
-    
-    if (searchXhr.status !== 200) return null;
-    
-    const searchData = JSON.parse(searchXhr.responseText);
-    if (!searchData.esearchresult?.idlist?.length) return null;
-    
-    const pmid = searchData.esearchresult.idlist[0];
-    
-    // Get abstract using PMID
-    const abstractUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=${pmid}&retmode=xml`;
-    const abstractXhr = new XMLHttpRequest();
-    abstractXhr.open('GET', abstractUrl, false);
-    abstractXhr.send();
-    
-    if (abstractXhr.status !== 200) return null;
-    
-    // Parse XML to extract abstract
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(abstractXhr.responseText, "text/xml");
-    const abstractNode = xmlDoc.querySelector("AbstractText");
-    
-    return abstractNode ? abstractNode.textContent : null;
-  } catch (error) {
-    Zotero.debug(`DOI Finder: PubMed failed: ${error}`);
-  }
-  return null;
-}
-
-async function findAbstractFromOpenAlex(doi: string): Promise<string | null> {
-  try {
-    const url = `https://api.openalex.org/works/doi:${doi}`;
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', url, false);
-    xhr.setRequestHeader('User-Agent', 'Zotero DOI Finder/0.0.1');
-    xhr.send();
-    
-    if (xhr.status === 200) {
-      const data = JSON.parse(xhr.responseText);
-      if (data.abstract_inverted_index) {
-        return reconstructAbstract(data.abstract_inverted_index);
-      }
-    }
-  } catch (error) {
-    Zotero.debug(`DOI Finder: OpenAlex failed: ${error}`);
-  }
-  return null;
-}
-
-function reconstructAbstract(invertedIndex: Record<string, number[]>): string {
-  const words: string[] = [];
-  for (const [word, positions] of Object.entries(invertedIndex)) {
-    for (const pos of positions) {
-      words[pos] = word;
-    }
-  }
-  return words.join(' ');
-}
-
-async function findAbstractForItem(item: any, doi: string): Promise<string | null> {
-  if (!doi) return null;
-  
-  // Check if abstract already exists
-  const existingAbstract = item.getField('abstractNote');
-  if (existingAbstract && existingAbstract.trim() !== '') {
-    Zotero.debug(`DOI Finder: Item ${item.id} already has abstract`);
-    return null;
-  }
-  
-  Zotero.debug(`DOI Finder: Searching for abstract with DOI: ${doi}`);
-  
-  // Try Semantic Scholar first
-  let abstract = await findAbstractFromSemanticScholar(doi);
-  if (abstract) {
-    Zotero.debug("DOI Finder: Abstract found via Semantic Scholar");
-    return abstract;
-  }
-  
-  // Try PubMed second
-  abstract = await findAbstractFromPubMed(doi);
-  if (abstract) {
-    Zotero.debug("DOI Finder: Abstract found via PubMed");
-    return abstract;
-  }
-  
-  // Try OpenAlex last
-  abstract = await findAbstractFromOpenAlex(doi);
-  if (abstract) {
-    Zotero.debug("DOI Finder: Abstract found via OpenAlex");
-    return abstract;
-  }
-  
-  Zotero.debug("DOI Finder: Abstract not found in any source");
-  return null;
-}
-
-
-async function processItems(items: any[]): Promise<{ foundDOIs: number; foundAbstracts: number; total: number }> {
+async function processItems(items: any[]): Promise<{ found: number; total: number }> {
   // Create progress window
   const progressWin = new Zotero.ProgressWindow({
     closeOnClick: false
   });
-  progressWin.changeHeadline(getString("findDOI.progress.title") || "Finding DOIs and Abstracts");
+  progressWin.changeHeadline(getString("findDOI.progress.title") || "Finding DOIs");
   
   // Create progress indicator
   const progressText = getString("findDOI.progress.processing") || "Processing items...";
@@ -328,8 +205,7 @@ async function processItems(items: any[]): Promise<{ foundDOIs: number; foundAbs
   
   progressWin.show();
   
-  let foundDOIs = 0;
-  let foundAbstracts = 0;
+  let found = 0;
   const total = items.length;
   
   for (let i = 0; i < items.length; i++) {
@@ -346,28 +222,11 @@ async function processItems(items: any[]): Promise<{ foundDOIs: number; foundAbs
     progressWin.changeHeadline(newProgressText);
     
     try {
-      // First, try to find DOI if missing
-      let doi = item.getField('DOI');
-      if (!doi || doi.trim() === '' || doi.trim() === '-') {
-        doi = await findDOIForItem(item);
-        if (doi) {
-          item.setField('DOI', doi);
-          await item.saveTx();
-          foundDOIs++;
-        }
-      } else {
-        // Item already has DOI, just get it for abstract finding
-        doi = doi.trim();
-      }
-      
-      // Now try to find abstract if we have a DOI
+      const doi = await findDOIForItem(item);
       if (doi) {
-        const abstract = await findAbstractForItem(item, doi);
-        if (abstract) {
-          item.setField('abstractNote', abstract);
-          await item.saveTx();
-          foundAbstracts++;
-        }
+        item.setField('DOI', doi);
+        await item.saveTx();
+        found++;
       }
     } catch (error) {
       Zotero.debug(`DOI Finder: Error processing item ${item.id}: ${error}`);
@@ -378,7 +237,7 @@ async function processItems(items: any[]): Promise<{ foundDOIs: number; foundAbs
   
   progressWin.close();
   
-  return { foundDOIs, foundAbstracts, total };
+  return { found, total };
 }
 
 async function findDOIs(): Promise<void> {
@@ -395,46 +254,26 @@ async function findDOIs(): Promise<void> {
 
   Zotero.debug(`DOI Finder: Processing ${items.length} total items`);
 
-
-  const itemsToProcess = items.filter((item: any) => {
-    if (!item.isRegularItem()) return false;
-    
+  const itemsWithoutDOI = items.filter((item: any) => {
     const doi = item.getField('DOI');
-    const abstract = item.getField('abstractNote');
-    
-    const needsDOI = !doi || doi.trim() === '' || doi.trim() === '-';
-    const needsAbstract = !abstract || abstract.trim() === '';
-    
-    const shouldProcess = needsDOI || needsAbstract;
-    
-    Zotero.debug(`DOI Finder: Item ${item.id} - DOI: "${doi}", Abstract: "${abstract ? 'exists' : 'missing'}", needs processing: ${shouldProcess}`);
-    return shouldProcess;
+    const needsDOI = item.isRegularItem() && (!doi || doi.trim() === '' || doi.trim() === '-');
+    Zotero.debug(`DOI Finder: Item ${item.id} - regular: ${item.isRegularItem()}, DOI: "${doi}", needs DOI: ${needsDOI}`);
+    return needsDOI;
   });
 
-  Zotero.debug(`DOI Finder: Found ${itemsToProcess.length} items that need DOIs or abstracts`);
+  Zotero.debug(`DOI Finder: Found ${itemsWithoutDOI.length} items without DOI`);
 
-  if (itemsToProcess.length === 0) {
-    Services.prompt.alert(null, getString("findDOI.noneFound") || "Complete", "All selected items already have DOI numbers and abstracts.");
+  if (itemsWithoutDOI.length === 0) {
+    Services.prompt.alert(null, getString("findDOI.noneFound"), getString("findDOI.allHaveDOI"));
     return;
   }
 
-  const result = await processItems(itemsToProcess);
-
-  // Create a more detailed completion message
-  let message = `Found ${result.foundDOIs} new DOIs and ${result.foundAbstracts} abstracts for ${result.total} items processed.`;
-  
-  if (result.foundDOIs === 0 && result.foundAbstracts === 0) {
-    message = "No new DOIs or abstracts were found.";
-  } else if (result.foundDOIs === 0) {
-    message = `Found ${result.foundAbstracts} new abstracts. No new DOIs were found.`;
-  } else if (result.foundAbstracts === 0) {
-    message = `Found ${result.foundDOIs} new DOIs. No abstracts were found.`;
-  }
+  const result = await processItems(itemsWithoutDOI);
 
   Services.prompt.alert(
     null, 
-    getString("findDOI.title") || "DOI and Abstract Finder",
-    message
+    getString("findDOI.title"),
+    getString("findDOI.complete", result)
   );
 }
 

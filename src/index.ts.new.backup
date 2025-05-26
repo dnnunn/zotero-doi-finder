@@ -418,7 +418,7 @@ async function findDOIs(): Promise<void> {
     return;
   }
 
-  const result = await processItems(itemsToProcess);
+  const result = await processItems(itemsWithoutDOI);
 
   // Create a more detailed completion message
   let message = `Found ${result.foundDOIs} new DOIs and ${result.foundAbstracts} abstracts for ${result.total} items processed.`;
