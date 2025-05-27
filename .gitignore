@@ -1,0 +1,44 @@
+# Mac system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Zotero addon runtime files
+addon/
+addon/*
+addon*
+
+# Build outputs
+build/
+dist/
+*.xpi
+
+# Node/npm (if you use npm for building)
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# IDE/Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.cache
+
+# Local config files that might contain sensitive data
+config.local.js
+.env
+.env.local
+
+# OS generated files
+Icon?

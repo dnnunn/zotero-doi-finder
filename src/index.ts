@@ -314,7 +314,7 @@ async function findAbstractForItem(item: any, doi: string): Promise<string | nul
 }
 
 
-async function processItems(items: any[]): Promise<{ foundDOIs: number; foundAbstracts: number; total: number }> {
+async function processItems(items: any[], alreadyComplete: { withDOI: number; withAbstract: number; totalRegular: number }): Promise<{ foundDOIs: number; foundAbstracts: number; total: number }> {
   // Create progress window
   const progressWin = new Zotero.ProgressWindow({
     closeOnClick: false
@@ -322,8 +322,8 @@ async function processItems(items: any[]): Promise<{ foundDOIs: number; foundAbs
   progressWin.changeHeadline(getString("findDOI.progress.title") || "Finding DOIs and Abstracts");
   
   // Create progress indicator
-  const progressText = getString("findDOI.progress.processing") || "Processing items...";
-  const icon = "chrome://zotero/skin/16/universal/book.svg";
+  const initialText = `Processing ${items.length} items (${alreadyComplete.withDOI} of ${alreadyComplete.totalRegular} already have DOIs, ${alreadyComplete.withAbstract} have abstracts)`;
+  const progressText = getString("findDOI.progress.processing") || initialText;  const icon = "chrome://zotero/skin/16/universal/book.svg";
   progressWin.addLines(progressText, icon);
   
   progressWin.show();
@@ -383,19 +383,44 @@ async function processItems(items: any[]): Promise<{ foundDOIs: number; foundAbs
 
 async function findDOIs(): Promise<void> {
   const ZP = Zotero.getActiveZoteroPane();
-  const collection = ZP.getSelectedCollection();
-  const libraryID = collection ? collection.libraryID : ZP.getSelectedLibraryID();
   
-  let items: any[];
-  if (collection) {
-    items = collection.getChildItems();
-  } else {
-    items = await Zotero.Items.getAll(libraryID);
+  // First check if items are selected
+  let items: any[] = ZP.getSelectedItems();
+  
+  // If no items selected, process the collection or library
+  if (items.length === 0) {
+    const collection = ZP.getSelectedCollection();
+    const libraryID = collection ? collection.libraryID : ZP.getSelectedLibraryID();
+    
+    if (collection) {
+      items = collection.getChildItems();
+    } else {
+      items = await Zotero.Items.getAll(libraryID);
+    }
   }
 
   Zotero.debug(`DOI Finder: Processing ${items.length} total items`);
 
 
+  // Count items with DOIs and abstracts before filtering
+  let totalRegularItems = 0;
+  let itemsWithDOI = 0;
+  let itemsWithAbstract = 0;
+  
+  items.forEach((item: any) => {
+    if (item.isRegularItem()) {
+      totalRegularItems++;
+      const doi = item.getField("DOI");
+      const abstract = item.getField("abstractNote");
+      
+      if (doi && doi.trim() !== "" && doi.trim() !== "-") {
+        itemsWithDOI++;
+      }
+      if (abstract && abstract.trim() !== "") {
+        itemsWithAbstract++;
+      }
+    }
+  });
   const itemsToProcess = items.filter((item: any) => {
     if (!item.isRegularItem()) return false;
     
@@ -418,7 +443,11 @@ async function findDOIs(): Promise<void> {
     return;
   }
 
-  const result = await processItems(itemsToProcess);
+  const result = await processItems(itemsToProcess, {
+    withDOI: itemsWithDOI,
+    withAbstract: itemsWithAbstract,
+    totalRegular: totalRegularItems
+  });
 
   // Create a more detailed completion message
   let message = `Found ${result.foundDOIs} new DOIs and ${result.foundAbstracts} abstracts for ${result.total} items processed.`;

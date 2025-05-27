@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
-  <rect width="96" height="96" rx="16" fill="#2E86AB"/>
-  <text x="48" y="40" font-family="Arial, sans-serif" font-size="24" font-weight="bold" text-anchor="middle" fill="white">DOI</text>
-  <circle cx="30" cy="65" r="8" fill="white"/>
-  <circle cx="48" cy="65" r="8" fill="white"/>
-  <circle cx="66" cy="65" r="8" fill="white"/>
-  <path d="M35 65 L43 65 M53 65 L61 65" stroke="white" stroke-width="2"/>
-</svg>

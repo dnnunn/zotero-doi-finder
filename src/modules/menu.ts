@@ -33,6 +33,26 @@ export function registerMenus() {
     const ZP = Zotero.getActiveZoteroPane();
     const items = ZP.getSelectedItems();
     
+
+    // Count items with DOIs and abstracts before filtering
+    let totalRegularItems = 0;
+    let itemsWithDOI = 0;
+    let itemsWithAbstract = 0;
+    
+    items.forEach((item: any) => {
+      if (item.isRegularItem()) {
+        totalRegularItems++;
+        const doi = item.getField("DOI");
+        const abstract = item.getField("abstractNote");
+        
+        if (doi && doi.trim() !== "" && doi.trim() !== "-") {
+          itemsWithDOI++;
+        }
+        if (abstract && abstract.trim() !== "") {
+          itemsWithAbstract++;
+        }
+      }
+    });
     // Use the same filtering logic as main function
     const itemsToProcess = items.filter((item: any) => {
       if (!item.isRegularItem()) return false;
@@ -51,7 +71,11 @@ export function registerMenus() {
       return;
     }
     
-    const result = await Zotero.DOIFinder.processItems(itemsToProcess);
+    const result = await Zotero.DOIFinder.processItems(itemsToProcess, {
+      withDOI: itemsWithDOI,
+      withAbstract: itemsWithAbstract,
+      totalRegular: totalRegularItems
+    });
     
     // Use the same detailed message as main function
     let message = `Found ${result.foundDOIs} new DOIs and ${result.foundAbstracts} abstracts for ${result.total} items processed.`;
