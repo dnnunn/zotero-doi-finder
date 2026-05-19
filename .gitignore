@@ -7,11 +7,6 @@
 ehthumbs.db
 Thumbs.db
 
-# Zotero addon runtime files
-addon/
-addon/*
-addon*
-
 # Build outputs
 build/
 dist/
@@ -20,7 +15,6 @@ dist/
 # Node/npm (if you use npm for building)
 node_modules/
 npm-debug.log*
-package-lock.json
 
 # IDE/Editor files
 .vscode/
@@ -41,4 +35,4 @@ config.local.js
 .env.local
 
 # OS generated files
-Icon?
+/Icon?
